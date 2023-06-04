@@ -11,6 +11,9 @@
 
 #include "initial_alignment.h"
 
+// 更新得到新的陀螺仪漂移Bgs
+// 对应视觉IMU对其的第二部分
+// 对应https://mp.weixin.qq.com/s/9twYJMOE8oydAzqND0UmFw中的公式31-34
 void solveGyroscopeBias(map<double, ImageFrame> &all_image_frame, Vector3d* Bgs)
 {
     Matrix3d A;
@@ -132,6 +135,8 @@ void RefineGravity(map<double, ImageFrame> &all_image_frame, Vector3d &g, Vector
     g = g0;
 }
 
+// 初始化速度、重力和尺度因子
+// 对应 https://mp.weixin.qq.com/s/9twYJMOE8oydAzqND0UmFw 中的公式34-36
 bool LinearAlignment(map<double, ImageFrame> &all_image_frame, Vector3d &g, VectorXd &x)
 {
     int all_frame_count = all_image_frame.size();

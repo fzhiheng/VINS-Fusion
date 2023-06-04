@@ -60,6 +60,9 @@ class IntegrationBase
             propagate(dt_buf[i], acc_buf[i], gyr_buf[i]);
     }
 
+    // 中值积分递推Jacobian和Covariance
+    // _acc_0上次测量加速度 _acc_1本次测量加速度 delta_p上一次的位移 result_delta_p位置变化量计算结果
+    // update_jacobian是否更新雅克比基本方法就涉及到了IMU的创博方针和器方差矩阵
     void midPointIntegration(double _dt, 
                             const Eigen::Vector3d &_acc_0, const Eigen::Vector3d &_gyr_0,
                             const Eigen::Vector3d &_acc_1, const Eigen::Vector3d &_gyr_1,
@@ -136,6 +139,9 @@ class IntegrationBase
 
     }
 
+    // IMU预积分传播方程 
+    // 积分计算两个关键帧之间IMU测量的变化量
+    // 同时维护更新预积分的Jacobian和Covariance,计算优化时必要的参数
     void propagate(double _dt, const Eigen::Vector3d &_acc_1, const Eigen::Vector3d &_gyr_1)
     {
         dt = _dt;

@@ -127,7 +127,7 @@ void sync_process()
         }
 
         std::chrono::milliseconds dura(2);
-        std::this_thread::sleep_for(dura);
+        std::this_thread::sleep_for(dura); //?为什么啊
     }
 }
 
@@ -191,6 +191,7 @@ void restart_callback(const std_msgs::BoolConstPtr &restart_msg)
     return;
 }
 
+// 是否使用IMU
 void imu_switch_callback(const std_msgs::BoolConstPtr &switch_msg)
 {
     if (switch_msg->data == true)
@@ -206,6 +207,7 @@ void imu_switch_callback(const std_msgs::BoolConstPtr &switch_msg)
     return;
 }
 
+// 相机的开关
 void cam_switch_callback(const std_msgs::BoolConstPtr &switch_msg)
 {
     if (switch_msg->data == true)
@@ -237,8 +239,10 @@ int main(int argc, char **argv)
 
     string config_file = argv[1];
     printf("config_file: %s\n", argv[1]);
-
+    
+    // parameter类中声明了全局变量，readParameter就是读取并重新设置了这些变量
     readParameters(config_file);
+    // estimator只需要Include parameter类就可以获取上面的变量来设置自己类内的变量值
     estimator.setParameter();
 
 #ifdef EIGEN_DONT_PARALLELIZE

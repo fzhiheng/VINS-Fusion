@@ -19,6 +19,10 @@ InitialEXRotation::InitialEXRotation(){
     ric = Matrix3d::Identity();
 }
 
+/* CalibrationExRotation
+当外参完全不知道的时候，可以在线对其进行初步估计,然后在后续优化时，会在optimize函数中再次优化。
+输入是新图像和上一图像的位姿 和二者之间的imu预积分值,输出旋转矩阵
+对应VIO课程第七讲中对外参矩阵的求解 */
 bool InitialEXRotation::CalibrationExRotation(vector<pair<Vector3d, Vector3d>> corres, Quaterniond delta_q_imu, Matrix3d &calib_ric_result)
 {
     frame_count++;

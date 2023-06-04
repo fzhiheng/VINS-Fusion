@@ -52,6 +52,11 @@ FeatureTracker::FeatureTracker()
     hasPrediction = false;
 }
 
+// 把追踪到的点进行标记
+// 设置遮挡部分（鱼眼相机）
+// 对检测到的特征点按追踪到的次数排序
+// 在mask图像中将追踪到点的地方设置为0，否则为255，目的是为了下面做特征点检测的时候可以选择没有特征点的区域进行检测。
+// 在同一区域内，追踪到次数最多的点会被保留，其他的点会被删除
 void FeatureTracker::setMask()
 {
     mask = cv::Mat(row, col, CV_8UC1, cv::Scalar(255));
@@ -91,6 +96,8 @@ double FeatureTracker::distance(cv::Point2f &pt1, cv::Point2f &pt2)
     return sqrt(dx * dx + dy * dy);
 }
 
+// 对图片进行一系列操作，返回特征点featureFrame。
+// 其中还包含了：图像处理、区域mask、检测特征点、计算像素速度等
 map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> FeatureTracker::trackImage(double _cur_time, const cv::Mat &_img, const cv::Mat &_img1)
 {
     TicToc t_r;
@@ -99,7 +106,7 @@ map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> FeatureTracker::trackIm
     row = cur_img.rows;
     col = cur_img.cols;
     cv::Mat rightImg = _img1;
-    /*
+    /* 可以添加图像处理的部分，比如直方图均衡等等方法。
     {
         cv::Ptr<cv::CLAHE> clahe = cv::createCLAHE(3.0, cv::Size(8, 8));
         clahe->apply(cur_img, cur_img);
@@ -195,10 +202,12 @@ map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> FeatureTracker::trackIm
         }
         //printf("feature cnt after add %d\n", (int)ids.size());
     }
-
+    // 将像素座标系下的座标，转换为归一化相机座标系下的座标 即cur_un_pts为归一化相机座标系下的座标。
     cur_un_pts = undistortedPts(cur_pts, m_camera[0]);
+    // 计算当前帧相对于前一帧 特征点沿x,y方向的像素移动速度
     pts_velocity = ptsVelocity(ids, cur_un_pts, cur_un_pts_map, prev_un_pts_map);
 
+    // 如果是双目相机，那么在右目上追踪左目的特征点
     if(!_img1.empty() && stereo_cam)
     {
         ids_right.clear();
@@ -257,6 +266,7 @@ map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> FeatureTracker::trackIm
     for(size_t i = 0; i < cur_pts.size(); i++)
         prevLeftPtsMap[ids[i]] = cur_pts[i];
 
+    //  制作featureFrame
     map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> featureFrame;
     for (size_t i = 0; i < ids.size(); i++)
     {
@@ -441,6 +451,7 @@ vector<cv::Point2f> FeatureTracker::ptsVelocity(vector<int> &ids, vector<cv::Poi
     return pts_velocity;
 }
 
+// drawTrack 画出追踪情况，就是在图像上的特征点位置出画圈圈，如果是双目的话就连线。
 void FeatureTracker::drawTrack(const cv::Mat &imLeft, const cv::Mat &imRight, 
                                vector<int> &curLeftIds,
                                vector<cv::Point2f> &curLeftPts, 

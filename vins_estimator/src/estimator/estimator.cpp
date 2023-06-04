@@ -105,7 +105,7 @@ void Estimator::setParameter()
     ProjectionTwoFrameOneCamFactor::sqrt_info = FOCAL_LENGTH / 1.5 * Matrix2d::Identity();
     ProjectionTwoFrameTwoCamFactor::sqrt_info = FOCAL_LENGTH / 1.5 * Matrix2d::Identity();
     ProjectionOneFrameTwoCamFactor::sqrt_info = FOCAL_LENGTH / 1.5 * Matrix2d::Identity();
-    td = TD;
+    td = TD;  //TODO 这个是干嘛用的
     g = G;
     cout << "set g " << g.transpose() << endl;
     featureTracker.readIntrinsicParameter(CAM_NAMES);
@@ -157,6 +157,9 @@ void Estimator::changeSensorType(int use_imu, int use_stereo)
     }
 }
 
+// 给Estimator输入图像
+// 其实是给featureTracker.trackImage输入图像，之后返回图像特征featureFrame。填充featureBuf
+// 之后执行processMeasurements，处理全部量测,IMU的预积分,特征点的处理等等都在这里进行.
 void Estimator::inputImage(double t, const cv::Mat &_img, const cv::Mat &_img1)
 {
     inputImageCnt++;
@@ -204,7 +207,7 @@ void Estimator::inputIMU(double t, const Vector3d &linearAcceleration, const Vec
     //printf("input imu with time %f \n", t);
     mBuf.unlock();
 
-    if (solver_flag == NON_LINEAR)
+    if (solver_flag == NON_LINEAR) //!solver_flag在初始化的时候被设置为INITIAL，在相机和IMU完成初始化就会到非线性优化阶段
     {
         mPropagate.lock();
         fastPredictIMU(t, linearAcceleration, angularVelocity);
@@ -223,7 +226,7 @@ void Estimator::inputFeature(double t, const map<int, vector<pair<int, Eigen::Ma
         processMeasurements();
 }
 
-
+// 对imu的时间进行判断，将队列里的imu数据放入到accVector和gyrVector中，完成之后返回true
 bool Estimator::getIMUInterval(double t0, double t1, vector<pair<double, Eigen::Vector3d>> &accVector, 
                                 vector<pair<double, Eigen::Vector3d>> &gyrVector)
 {
@@ -267,6 +270,7 @@ bool Estimator::IMUAvailable(double t)
         return false;
 }
 
+// 这是处理全部量测的线程,IMU的预积分,特征点的处理等等都在这里进行.
 void Estimator::processMeasurements()
 {
     while (1)
@@ -277,9 +281,10 @@ void Estimator::processMeasurements()
         if(!featureBuf.empty())
         {
             feature = featureBuf.front();
-            curTime = feature.first + td;
+            curTime = feature.first + td; //?为什么要加一个td呢
             while(1)
             {
+                // 判断输入的时间t时候的imu是否可用
                 if ((!USE_IMU  || IMUAvailable(feature.first + td)))
                     break;
                 else
@@ -288,7 +293,7 @@ void Estimator::processMeasurements()
                     if (! MULTIPLE_THREAD)
                         return;
                     std::chrono::milliseconds dura(5);
-                    std::this_thread::sleep_for(dura);
+                    std::this_thread::sleep_for(dura); //?什么要延时呢
                 }
             }
             mBuf.lock();
@@ -301,7 +306,7 @@ void Estimator::processMeasurements()
             if(USE_IMU)
             {
                 if(!initFirstPoseFlag)
-                    initFirstIMUPose(accVector);
+                    initFirstIMUPose(accVector); 
                 for(size_t i = 0; i < accVector.size(); i++)
                 {
                     double dt;
@@ -341,7 +346,7 @@ void Estimator::processMeasurements()
     }
 }
 
-
+//初始化第一个imu位姿，求一个姿态角,然后把航向角设为0
 void Estimator::initFirstIMUPose(vector<pair<double, Eigen::Vector3d>> &accVector)
 {
     printf("init first imu pose\n");
@@ -371,7 +376,7 @@ void Estimator::initFirstPose(Eigen::Vector3d p, Eigen::Matrix3d r)
     initR = r;
 }
 
-
+//对imu计算预积分传进来的是一个imu数据 得到预积分值pre_integrations 还有一个tmp_pre_integration 
 void Estimator::processIMU(double t, double dt, const Vector3d &linear_acceleration, const Vector3d &angular_velocity)
 {
     if (!first_imu)
@@ -387,6 +392,7 @@ void Estimator::processIMU(double t, double dt, const Vector3d &linear_accelerat
     }
     if (frame_count != 0)
     {
+        //!这里的push_back进行了重载,在push的时候就已经完成了预积分
         pre_integrations[frame_count]->push_back(dt, linear_acceleration, angular_velocity);
         //if(solver_flag != NON_LINEAR)
             tmp_pre_integration->push_back(dt, linear_acceleration, angular_velocity);
@@ -395,6 +401,7 @@ void Estimator::processIMU(double t, double dt, const Vector3d &linear_accelerat
         linear_acceleration_buf[frame_count].push_back(linear_acceleration);
         angular_velocity_buf[frame_count].push_back(angular_velocity);
 
+        // 计算对应绝对坐标系下的位置,Rs Ps Vs是frame_count这一个图像帧开始的预积分值,是在绝对坐标系下的.
         int j = frame_count;         
         Vector3d un_acc_0 = Rs[j] * (acc_0 - Bas[j]) - g;
         Vector3d un_gyr = 0.5 * (gyr_0 + angular_velocity) - Bgs[j];
@@ -433,11 +440,13 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
     all_image_frame.insert(make_pair(header, imageframe));
     tmp_pre_integration = new IntegrationBase{acc_0, gyr_0, Bas[frame_count], Bgs[frame_count]};
 
+    // 估计一个外部参,并把ESTIMATE_EXTRINSIC置1,输出ric和RIC //?RIC是什么
     if(ESTIMATE_EXTRINSIC == 2)
     {
         ROS_INFO("calibrating extrinsic param, rotation movement is needed");
         if (frame_count != 0)
         {
+            // 找到对应的图像, 这里边放的是新图像和上一帧
             vector<pair<Vector3d, Vector3d>> corres = f_manager.getCorresponding(frame_count - 1, frame_count);
             Matrix3d calib_ric;
             if (initial_ex_rotation.CalibrationExRotation(corres, pre_integrations[frame_count]->delta_q, calib_ric))
@@ -461,25 +470,26 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
                 bool result = false;
                 if(ESTIMATE_EXTRINSIC != 2 && (header - initial_timestamp) > 0.1)
                 {
-                    result = initialStructure();
-                    initial_timestamp = header;   
+                    result = initialStructure();  //视觉惯性联合初始化
+                    initial_timestamp = header;   //更新初始化时间戳
                 }
-                if(result)
+                if(result) //如果初始化成功
                 {
-                    optimization();
+                    optimization();      //先进行一次滑动窗口非线性优化，得到当前帧与第一帧的位姿
                     updateLatestStates();
                     solver_flag = NON_LINEAR;
-                    slideWindow();
+                    slideWindow();       //滑动窗口
                     ROS_INFO("Initialization finish!");
                 }
                 else
-                    slideWindow();
+                    slideWindow();    //滑掉这一窗
             }
         }
 
         // stereo + IMU initilization
         if(STEREO && USE_IMU)
         {
+            // 有了深度，当下一帧照片来到以后就可以利用pnp求解位姿了
             f_manager.initFramePoseByPnP(frame_count, Ps, Rs, tic, ric);
             f_manager.triangulate(frame_count, Ps, Rs, tic, ric);
             if (frame_count == WINDOW_SIZE)
@@ -493,6 +503,8 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
                     i++;
                 }
                 solveGyroscopeBias(all_image_frame, Bgs);
+                // 对之前预积分得到的结果进行更新。
+                // 预积分的好处查看就在于你得到新的Bgs，不需要又重新再积分一遍，可以通过Bgs对位姿，速度的一阶导数，进行线性近似，得到新的Bgs求解出MU的最终结果。
                 for (int i = 0; i <= WINDOW_SIZE; i++)
                 {
                     pre_integrations[i]->repropagate(Vector3d::Zero(), Bgs[i]);
@@ -723,11 +735,15 @@ bool Estimator::initialStructure()
 
 }
 
+// 视觉和惯性的对其,对应https://mp.weixin.qq.com/s/9twYJMOE8oydAzqND0UmFw中的visualInitialAlign
+/* visualInitialAlign
+很具VIO课程第七讲:一共分为5步:
+1估计旋转外参. 2估计陀螺仪bias 3估计中立方向,速度.尺度初始值 4对重力加速度进一步优化 5将轨迹对其到世界坐标系 */
 bool Estimator::visualInitialAlign()
 {
     TicToc t_g;
     VectorXd x;
-    //solve scale
+    //solve scale // 视觉IMu的
     bool result = VisualIMUAlignment(all_image_frame, Bgs, g, x);
     if(!result)
     {
@@ -1001,25 +1017,35 @@ bool Estimator::failureDetection()
     return false;
 }
 
+// 基于滑动窗口的紧耦合的非线性优化，残差项的构造和求解
 void Estimator::optimization()
 {
     TicToc t_whole, t_prepare;
     vector2double();
 
-    ceres::Problem problem;
-    ceres::LossFunction *loss_function;
+    //------------------ 定义问题 定义本地参数化,并添加优化参数-------------------------------------------------
+    ceres::Problem problem; // 定义ceres的优化问题
+    ceres::LossFunction *loss_function; //核函数
     //loss_function = NULL;
-    loss_function = new ceres::HuberLoss(1.0);
+    loss_function = new ceres::HuberLoss(1.0); //HuberLoss当预测偏差小于 δ 时，它采用平方误差,当预测偏差大于 δ 时，采用的线性误差。
     //loss_function = new ceres::CauchyLoss(1.0 / FOCAL_LENGTH);
     //ceres::LossFunction* loss_function = new ceres::HuberLoss(1.0);
     for (int i = 0; i < frame_count + 1; i++)
     {
+        // 对于四元数或者旋转矩阵这种使用过参数化表示旋转的方式，它们是不支持广义的加法
+        // 所以我们在使用ceres对其进行迭代更新的时候就需要自定义其更新方式了，具体的做法是实现一个LocalParameterization
         ceres::LocalParameterization *local_parameterization = new PoseLocalParameterization();
+        
+        // AddParameterBlock   向该问题添加具有适当大小和参数化的参数块。
         problem.AddParameterBlock(para_Pose[i], SIZE_POSE, local_parameterization);
         if(USE_IMU)
             problem.AddParameterBlock(para_SpeedBias[i], SIZE_SPEEDBIAS);
     }
+
+    // ?没使用imu时,将窗口内第一帧的位姿固定
     if(!USE_IMU)
+        // SetParameterBlockConstant 在优化过程中，使指示的参数块保持恒定。设置任何参数块变成一个常量
+        // 固定第一帧的位姿不变!  这里涉及到论文2中的
         problem.SetParameterBlockConstant(para_Pose[0]);
 
     for (int i = 0; i < NUM_OF_CAM; i++)
@@ -1031,24 +1057,34 @@ void Estimator::optimization()
             //ROS_INFO("estimate extinsic param");
             openExEstimation = 1;
         }
-        else
+        else //如果不需要估计,则把估计器中的外部参数设为定值
         {
             //ROS_INFO("fix extinsic param");
             problem.SetParameterBlockConstant(para_Ex_Pose[i]);
         }
     }
-    problem.AddParameterBlock(para_Td[0], 1);
 
-    if (!ESTIMATE_TD || Vs[0].norm() < 0.2)
+
+    problem.AddParameterBlock(para_Td[0], 1); //把时间也作为待优化变量
+    if (!ESTIMATE_TD || Vs[0].norm() < 0.2) //如果不估计时间就固定
         problem.SetParameterBlockConstant(para_Td[0]);
 
+    // ------------------------在问题中添加约束,也就是构造残差函数---------------------------------- 
+    // 在问题中添加先验信息作为约束
     if (last_marginalization_info && last_marginalization_info->valid)
     {
-        // construct new marginlization_factor
+        /// 构造新的marginisation_factor, construct new marginlization_factor construct new marginlization_factor
         MarginalizationFactor *marginalization_factor = new MarginalizationFactor(last_marginalization_info);
+        /* 通过提供参数块的向量来添加残差块。
+        ResidualBlockId AddResidualBlock(
+        CostFunction* cost_function,//损失函数
+        LossFunction* loss_function,//核函数
+        const std::vector<double*>& parameter_blocks); */
         problem.AddResidualBlock(marginalization_factor, NULL,
                                  last_marginalization_parameter_blocks);
     }
+
+    // 在问题中添加IMU约束
     if(USE_IMU)
     {
         for (int i = 0; i < frame_count; i++)
@@ -1057,11 +1093,12 @@ void Estimator::optimization()
             if (pre_integrations[j]->sum_dt > 10.0)
                 continue;
             IMUFactor* imu_factor = new IMUFactor(pre_integrations[j]);
+             //这里添加的参数包括状态i和状态j
             problem.AddResidualBlock(imu_factor, NULL, para_Pose[i], para_SpeedBias[i], para_Pose[j], para_SpeedBias[j]);
         }
     }
 
-    int f_m_cnt = 0;
+    int f_m_cnt = 0;  //每个特征点,观测到它的相机的计数 visual measurement count
     int feature_index = -1;
     for (auto &it_per_id : f_manager.feature)
     {
